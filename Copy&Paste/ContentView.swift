@@ -5,55 +5,464 @@
 //  Created by E. Moisés Juárez Hernández on 03/07/2026.
 //
 
+import AppKit
 import SwiftUI
 import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @EnvironmentObject private var clipboardController: ClipboardController
+    @EnvironmentObject private var accessibilityPermissionController: AccessibilityPermissionController
+    @EnvironmentObject private var historyWindowController: HistoryWindowController
+
+    @State private var searchText = ""
+    @State private var aliasEditorItem: ClipboardItem?
+    @State private var aliasText = ""
+    @State private var isShowingAliasEditor = false
+
+    private var items: [ClipboardItem] {
+        clipboardController.items
+    }
+
+    private var filteredItems: [ClipboardItem] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !query.isEmpty else {
+            return items
+        }
+
+        return items.filter { item in
+            item.matchesSearch(query)
+        }
+    }
+
+    private var pinnedItems: [ClipboardItem] {
+        filteredItems.filter(\.isPinned)
+    }
+
+    private var historyItems: [ClipboardItem] {
+        filteredItems.filter { !$0.isPinned }
+    }
+
+    private var allHistoryItems: [ClipboardItem] {
+        items.filter { !$0.isPinned }
+    }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationStack {
             List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+                if !pinnedItems.isEmpty {
+                    Section("Fijos") {
+                        ForEach(pinnedItems) { item in
+                            clipboardRow(for: item)
+                        }
+                        .onDelete { offsets in
+                            deleteItems(at: offsets, from: pinnedItems)
+                        }
                     }
                 }
-                .onDelete(perform: deleteItems)
+
+                if !historyItems.isEmpty {
+                    Section("Historial") {
+                        ForEach(historyItems) { item in
+                            clipboardRow(for: item)
+                        }
+                        .onDelete { offsets in
+                            deleteItems(at: offsets, from: historyItems)
+                        }
+                    }
+                }
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+            .navigationTitle("Copiados")
+            .searchable(text: $searchText, prompt: "Buscar")
             .toolbar {
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
+                ToolbarItemGroup {
+                    MonitorStatusView(isRunning: clipboardController.isMonitoring)
+                    AccessibilityStatusButton(controller: accessibilityPermissionController)
+
+                    Button(action: captureCurrentPasteboard) {
+                        Label("Capturar ahora", systemImage: "arrow.clockwise")
                     }
+
+                    Button(role: .destructive, action: clearHistory) {
+                        Label("Limpiar historial", systemImage: "trash")
+                    }
+                    .disabled(allHistoryItems.isEmpty)
                 }
             }
-        } detail: {
-            Text("Select an item")
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+            .overlay {
+                if items.isEmpty {
+                    ContentUnavailableView(
+                        "Sin copiados",
+                        systemImage: "doc.on.clipboard",
+                        description: Text("Copia texto o una captura para verla aqui.")
+                    )
+                } else if filteredItems.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                }
             }
+        }
+        .sheet(isPresented: $isShowingAliasEditor) {
+            if let aliasEditorItem {
+                AliasEditorView(
+                    item: aliasEditorItem,
+                    aliasText: $aliasText,
+                    onCancel: closeAliasEditor,
+                    onSave: saveAlias
+                )
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if let message = footerMessage {
+                ContentUnavailableView(
+                    message,
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.footnote)
+                .padding(.horizontal)
+            }
+        }
+    }
+
+    private var footerMessage: String? {
+        historyWindowController.errorMessage
+            ?? clipboardController.errorMessage
+    }
+
+    @ViewBuilder
+    private func clipboardRow(for item: ClipboardItem) -> some View {
+        ClipboardRow(
+            item: item,
+            onPaste: {
+                pasteAndClose(item)
+            },
+            onPasteMode: { mode in
+                pasteAndClose(item, mode: mode)
+            },
+            onTogglePin: {
+                togglePin(item)
+            },
+            onDelete: {
+                delete(item)
+            },
+            onEditAlias: {
+                openAliasEditor(for: item)
+            }
+        )
+        .contextMenu {
+            ForEach(item.availablePasteModes) { mode in
+                Button {
+                    pasteAndClose(item, mode: mode)
+                } label: {
+                    Label(mode.title, systemImage: mode.systemImage)
+                }
+            }
+
+            Divider()
+
+            Button {
+                togglePin(item)
+            } label: {
+                Label(item.isPinned ? "Quitar fijo" : "Fijar", systemImage: item.isPinned ? "pin.slash" : "pin")
+            }
+
+            if item.isPinned || item.displayAlias != nil {
+                Button {
+                    openAliasEditor(for: item)
+                } label: {
+                    Label("Editar alias", systemImage: "tag")
+                }
+            }
+
+            Button(role: .destructive) {
+                delete(item)
+            } label: {
+                Label("Eliminar", systemImage: "trash")
+            }
+        }
+    }
+
+    private func captureCurrentPasteboard() {
+        clipboardController.captureCurrentPasteboard()
+    }
+
+    private func pasteAndClose(_ item: ClipboardItem) {
+        historyWindowController.pasteAndClose(item)
+    }
+
+    private func pasteAndClose(_ item: ClipboardItem, mode: ClipboardPasteMode) {
+        historyWindowController.pasteAndClose(item, mode: mode)
+    }
+
+    private func togglePin(_ item: ClipboardItem) {
+        let wasPinned = item.isPinned
+
+        withAnimation {
+            clipboardController.togglePin(item)
+        }
+
+        if !wasPinned {
+            openAliasEditor(for: item)
+        }
+    }
+
+    private func delete(_ item: ClipboardItem) {
+        withAnimation {
+            clipboardController.delete(item)
+        }
+    }
+
+    private func deleteItems(at offsets: IndexSet, from source: [ClipboardItem]) {
+        withAnimation {
+            for offset in offsets {
+                delete(source[offset])
+            }
+        }
+    }
+
+    private func clearHistory() {
+        withAnimation {
+            clipboardController.clearHistory()
+        }
+    }
+
+    private func openAliasEditor(for item: ClipboardItem) {
+        aliasEditorItem = item
+        aliasText = item.displayAlias ?? ""
+        isShowingAliasEditor = true
+    }
+
+    private func closeAliasEditor() {
+        isShowingAliasEditor = false
+        aliasEditorItem = nil
+        aliasText = ""
+    }
+
+    private func saveAlias() {
+        guard let aliasEditorItem else {
+            closeAliasEditor()
+            return
+        }
+
+        clipboardController.setAlias(aliasText, for: aliasEditorItem)
+        closeAliasEditor()
+    }
+}
+
+private struct ClipboardRow: View {
+    let item: ClipboardItem
+    let onPaste: () -> Void
+    let onPasteMode: (ClipboardPasteMode) -> Void
+    let onTogglePin: () -> Void
+    let onDelete: () -> Void
+    let onEditAlias: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Button(action: onPaste) {
+                HStack(alignment: .top, spacing: 10) {
+                    itemPreview
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let displayAlias = item.displayAlias {
+                            Text(displayAlias)
+                                .font(.headline)
+                                .lineLimit(1)
+                        }
+
+                        Text(item.preview.isEmpty ? "Texto sin vista previa" : item.preview)
+                            .font(item.displayAlias == nil ? .body : .subheadline)
+                            .foregroundStyle(item.displayAlias == nil ? .primary : .secondary)
+                            .lineLimit(item.displayAlias == nil ? 2 : 1)
+
+                        Text(item.copiedAt, format: Date.FormatStyle(date: .abbreviated, time: .shortened))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if item.availablePasteModes.count > 1 {
+                Menu {
+                    ForEach(item.availablePasteModes) { mode in
+                        Button {
+                            onPasteMode(mode)
+                        } label: {
+                            Label(mode.title, systemImage: mode.systemImage)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("Seleccionar modo de pegado")
+            }
+
+            Button(action: onTogglePin) {
+                Image(systemName: item.isPinned ? "pin.slash" : "pin")
+            }
+            .buttonStyle(.borderless)
+            .help(item.isPinned ? "Quitar fijo" : "Fijar")
+
+            if item.isPinned || item.displayAlias != nil {
+                Button(action: onEditAlias) {
+                    Image(systemName: "tag")
+                }
+                .buttonStyle(.borderless)
+                .help(item.displayAlias == nil ? "Agregar alias" : "Editar alias")
+            }
+
+            Button(role: .destructive, action: onDelete) {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Eliminar")
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var itemPreview: some View {
+        if let image = item.image {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 48, height: 34)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(.separator, lineWidth: 1)
+                }
+        } else {
+            Image(systemName: item.isPinned ? "pin.fill" : "doc.text")
+                .foregroundStyle(item.isPinned ? .blue : .secondary)
+                .frame(width: 48, height: 34)
         }
     }
 }
 
+private struct AliasEditorView: View {
+    let item: ClipboardItem
+    @Binding var aliasText: String
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Alias del fijo", systemImage: "tag")
+                .font(.headline)
+
+            Text(item.preview.isEmpty ? "Texto sin vista previa" : item.preview)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+
+            TextField("Alias", text: $aliasText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(onSave)
+
+            HStack {
+                Button("Cancelar", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button("Quitar alias") {
+                    aliasText = ""
+                    onSave()
+                }
+                .disabled(item.displayAlias == nil && aliasText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Button("Guardar", action: onSave)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(width: 360, alignment: .leading)
+    }
+}
+
+private struct MonitorStatusView: View {
+    let isRunning: Bool
+
+    var body: some View {
+        Label(isRunning ? "Activo" : "Pausado", systemImage: isRunning ? "checkmark.circle.fill" : "pause.circle")
+            .foregroundStyle(isRunning ? .green : .secondary)
+    }
+}
+
+private struct AccessibilityStatusButton: View {
+    @ObservedObject var controller: AccessibilityPermissionController
+    @State private var isShowingDetails = false
+
+    var body: some View {
+        Button {
+            controller.refresh()
+            isShowingDetails.toggle()
+        } label: {
+            Image(systemName: controller.isTrusted ? "info.circle.fill" : "info.circle")
+                .foregroundStyle(controller.isTrusted ? .green : .orange)
+        }
+        .buttonStyle(.borderless)
+        .help(controller.isTrusted ? "Accesibilidad activa" : "Accesibilidad pendiente")
+        .popover(isPresented: $isShowingDetails, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 12) {
+                Label(
+                    controller.isTrusted ? "Accesibilidad activa" : "Accesibilidad pendiente",
+                    systemImage: controller.isTrusted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                )
+                .foregroundStyle(controller.isTrusted ? .green : .orange)
+                .font(.headline)
+
+                Text(statusMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack {
+                    Button("Actualizar") {
+                        controller.refresh()
+                    }
+
+                    if !controller.isTrusted {
+                        Button("Abrir Ajustes") {
+                            controller.requestPermissionAndOpenSettings()
+                        }
+                    }
+                }
+            }
+            .padding()
+            .frame(width: 280, alignment: .leading)
+        }
+    }
+
+    private var statusMessage: String {
+        if controller.isTrusted {
+            return "Copy&Paste tiene permiso para enviar el pegado automático."
+        }
+
+        return controller.guidanceMessage
+            ?? "Activa Copy&Paste en Accesibilidad para permitir el pegado automático."
+    }
+}
+
 #Preview {
+    let container = try! ModelContainer(
+        for: ClipboardItem.self,
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+    )
+    let clipboardController = ClipboardController(modelContainer: container, startsMonitoring: false)
+    let accessibilityPermissionController = AccessibilityPermissionController()
+
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        .environmentObject(clipboardController)
+        .environmentObject(accessibilityPermissionController)
+        .environmentObject(HistoryWindowController(
+            clipboardController: clipboardController,
+            accessibilityPermissionController: accessibilityPermissionController,
+            modelContainer: container
+        ))
 }
