@@ -50,57 +50,54 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if !pinnedItems.isEmpty {
-                    Section("Fijos") {
-                        ForEach(pinnedItems) { item in
-                            clipboardRow(for: item)
+            VStack(spacing: 0) {
+                HistoryControlsBar(
+                    isMonitoring: clipboardController.isMonitoring,
+                    accessibilityPermissionController: accessibilityPermissionController,
+                    canClearHistory: !allHistoryItems.isEmpty,
+                    onCapture: captureCurrentPasteboard,
+                    onClearHistory: requestClearHistoryConfirmation
+                )
+
+                Divider()
+
+                List {
+                    if !pinnedItems.isEmpty {
+                        Section("Fijos") {
+                            ForEach(pinnedItems) { item in
+                                clipboardRow(for: item)
+                            }
+                            .onDelete { offsets in
+                                deleteItems(at: offsets, from: pinnedItems)
+                            }
                         }
-                        .onDelete { offsets in
-                            deleteItems(at: offsets, from: pinnedItems)
+                    }
+
+                    if !historyItems.isEmpty {
+                        Section("Historial") {
+                            ForEach(historyItems) { item in
+                                clipboardRow(for: item)
+                            }
+                            .onDelete { offsets in
+                                deleteItems(at: offsets, from: historyItems)
+                            }
                         }
                     }
                 }
-
-                if !historyItems.isEmpty {
-                    Section("Historial") {
-                        ForEach(historyItems) { item in
-                            clipboardRow(for: item)
-                        }
-                        .onDelete { offsets in
-                            deleteItems(at: offsets, from: historyItems)
-                        }
+                .overlay {
+                    if items.isEmpty {
+                        ContentUnavailableView(
+                            "Sin copiados",
+                            systemImage: "doc.on.clipboard",
+                            description: Text("Copia texto o una captura para verla aqui.")
+                        )
+                    } else if filteredItems.isEmpty {
+                        ContentUnavailableView.search(text: searchText)
                     }
                 }
             }
             .navigationTitle("Copiados")
             .searchable(text: $searchText, prompt: "Buscar")
-            .toolbar {
-                ToolbarItemGroup {
-                    MonitorStatusView(isRunning: clipboardController.isMonitoring)
-                    AccessibilityStatusButton(controller: accessibilityPermissionController)
-
-                    Button(action: captureCurrentPasteboard) {
-                        Label("Capturar ahora", systemImage: "arrow.clockwise")
-                    }
-
-                    Button(role: .destructive, action: requestClearHistoryConfirmation) {
-                        Label("Limpiar historial", systemImage: "trash")
-                    }
-                    .disabled(allHistoryItems.isEmpty)
-                }
-            }
-            .overlay {
-                if items.isEmpty {
-                    ContentUnavailableView(
-                        "Sin copiados",
-                        systemImage: "doc.on.clipboard",
-                        description: Text("Copia texto o una captura para verla aqui.")
-                    )
-                } else if filteredItems.isEmpty {
-                    ContentUnavailableView.search(text: searchText)
-                }
-            }
         }
         .sheet(isPresented: $isShowingAliasEditor) {
             if let aliasEditorItem {
@@ -260,6 +257,39 @@ struct ContentView: View {
 
         clipboardController.setAlias(aliasText, for: aliasEditorItem)
         closeAliasEditor()
+    }
+}
+
+private struct HistoryControlsBar: View {
+    let isMonitoring: Bool
+    @ObservedObject var accessibilityPermissionController: AccessibilityPermissionController
+    let canClearHistory: Bool
+    let onCapture: () -> Void
+    let onClearHistory: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            MonitorStatusView(isRunning: isMonitoring)
+                .padding(.leading, 4)
+
+            AccessibilityStatusButton(controller: accessibilityPermissionController)
+
+            Spacer(minLength: 12)
+
+            Button(action: onCapture) {
+                Label("Capturar", systemImage: "arrow.clockwise")
+            }
+            .controlSize(.small)
+
+            Button(role: .destructive, action: onClearHistory) {
+                Label("Limpiar", systemImage: "trash")
+            }
+            .controlSize(.small)
+            .disabled(!canClearHistory)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
     }
 }
 
