@@ -402,10 +402,42 @@ private struct AliasEditorView: View {
 
 private struct MonitorStatusView: View {
     let isRunning: Bool
+    @State private var isShowingDetails = false
 
     var body: some View {
-        Label(isRunning ? "Activo" : "Pausado", systemImage: isRunning ? "checkmark.circle.fill" : "pause.circle")
-            .foregroundStyle(isRunning ? .green : .secondary)
+        Button {
+            isShowingDetails.toggle()
+        } label: {
+            Image(systemName: isRunning ? "checkmark.circle.fill" : "pause.circle")
+                .foregroundStyle(isRunning ? .green : .secondary)
+        }
+        .buttonStyle(.borderless)
+        .help(isRunning ? "Monitor del portapapeles activo" : "Monitor del portapapeles pausado")
+        .popover(isPresented: $isShowingDetails, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(
+                    isRunning ? "Monitor activo" : "Monitor pausado",
+                    systemImage: isRunning ? "checkmark.circle.fill" : "pause.circle"
+                )
+                .foregroundStyle(isRunning ? .green : .secondary)
+                .font(.headline)
+
+                Text(statusMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding()
+            .frame(width: 280, alignment: .leading)
+        }
+    }
+
+    private var statusMessage: String {
+        if isRunning {
+            return "Copy&Paste esta escuchando cambios del portapapeles para guardar nuevos registros."
+        }
+
+        return "Copy&Paste no esta capturando cambios del portapapeles en este momento."
     }
 }
 
