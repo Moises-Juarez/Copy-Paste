@@ -65,6 +65,49 @@ xcodebuild -project "Copy&Paste.xcodeproj" \
   -configuration Debug build
 ```
 
+## Exportar la app
+
+En macOS el "ejecutable" que normalmente se comparte no es el binario suelto, sino el paquete `.app`. Dentro de ese paquete esta el binario real en:
+
+```text
+Copy&Paste.app/Contents/MacOS/Copy&Paste
+```
+
+Para uso local, puedes generar una version Release desde Xcode:
+
+1. Abre `Copy&Paste.xcodeproj`.
+2. Selecciona el scheme `Copy&Paste`.
+3. Cambia la configuracion a `Release` si lo necesitas.
+4. Usa `Product > Archive`.
+5. En Organizer, elige `Distribute App`.
+6. Para uso personal o pruebas, exporta/copia la `.app`.
+7. Copia `Copy&Paste.app` a `/Applications`.
+
+Tambien puedes generar una `.app` desde terminal:
+
+```bash
+rm -rf build dist
+
+xcodebuild -project "Copy&Paste.xcodeproj" \
+  -scheme "Copy&Paste" \
+  -destination "platform=macOS" \
+  -configuration Release \
+  -derivedDataPath "build/DerivedData" \
+  build
+
+mkdir -p dist
+ditto "build/DerivedData/Build/Products/Release/Copy&Paste.app" "dist/Copy&Paste.app"
+ditto -c -k --keepParent "dist/Copy&Paste.app" "dist/Copy&Paste.zip"
+```
+
+El archivo para compartir quedara en:
+
+```text
+dist/Copy&Paste.zip
+```
+
+Si quieres distribuirla fuera de tu Mac, considera firmar y notarizar la app con una cuenta de Apple Developer. Si no esta firmada/notarizada, macOS puede mostrar una advertencia de seguridad al abrirla en otra computadora.
+
 ## Atajo principal
 
 ```text
