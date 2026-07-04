@@ -73,7 +73,7 @@ struct ClipboardMenuView: View {
             Divider()
 
             Button(role: .destructive) {
-                clipboardController.clearHistory()
+                clearHistoryWithConfirmation()
             } label: {
                 Label("Limpiar historial", systemImage: "trash")
             }
@@ -112,6 +112,21 @@ struct ClipboardMenuView: View {
 
     private func showHistoryWindow() {
         historyWindowController.show()
+    }
+
+    private func clearHistoryWithConfirmation() {
+        let alert = NSAlert()
+        alert.messageText = "Eliminar historial"
+        alert.informativeText = "Se eliminaran todos los registros no fijados. Los registros fijados se conservaran."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Eliminar historial")
+        alert.addButton(withTitle: "Cancelar")
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        clipboardController.clearHistory()
     }
 
     private func menuTitle(for item: ClipboardItem) -> String {

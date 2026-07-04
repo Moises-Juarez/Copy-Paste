@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var aliasEditorItem: ClipboardItem?
     @State private var aliasText = ""
     @State private var isShowingAliasEditor = false
+    @State private var isShowingClearHistoryConfirmation = false
 
     private var items: [ClipboardItem] {
         clipboardController.items
@@ -83,7 +84,7 @@ struct ContentView: View {
                         Label("Capturar ahora", systemImage: "arrow.clockwise")
                     }
 
-                    Button(role: .destructive, action: clearHistory) {
+                    Button(role: .destructive, action: requestClearHistoryConfirmation) {
                         Label("Limpiar historial", systemImage: "trash")
                     }
                     .disabled(allHistoryItems.isEmpty)
@@ -120,6 +121,16 @@ struct ContentView: View {
                 .font(.footnote)
                 .padding(.horizontal)
             }
+        }
+        .confirmationDialog(
+            "Eliminar historial",
+            isPresented: $isShowingClearHistoryConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Eliminar historial", role: .destructive, action: clearHistory)
+            Button("Cancelar", role: .cancel) { }
+        } message: {
+            Text("Se eliminaran todos los registros no fijados. Los registros fijados se conservaran.")
         }
     }
 
@@ -217,6 +228,10 @@ struct ContentView: View {
                 delete(source[offset])
             }
         }
+    }
+
+    private func requestClearHistoryConfirmation() {
+        isShowingClearHistoryConfirmation = true
     }
 
     private func clearHistory() {
