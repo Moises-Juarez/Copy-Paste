@@ -6,7 +6,7 @@ Copy&Paste permite abrir un historial rapido con `Command + Shift + V`, seleccio
 
 ## Funciones
 
-- Historial persistente de textos, tablas e imagenes copiadas.
+- Historial persistente de textos, tablas, imagenes y archivos copiados.
 - Registros fijados para conservar contenido importante.
 - Alias en registros fijados para identificarlos mas facil.
 - Busqueda por contenido o alias.
@@ -41,6 +41,8 @@ El historial se guarda localmente con SwiftData en:
 ```
 
 El historial y los registros fijados se conservan despues de reiniciar la computadora.
+
+Cuando se copian archivos, la app guarda referencias a sus rutas originales. Esto permite volver a ponerlos en el portapapeles para adjuntarlos o pegarlos en otras aplicaciones sin duplicar archivos pesados dentro de la base de datos. Si un archivo se mueve o se elimina, ese registro ya no podra pegarse hasta que el archivo vuelva a existir en esa ubicacion.
 
 ## Desarrollo
 
@@ -119,4 +121,5 @@ Este atajo muestra la ventana de historial. Al seleccionar un elemento se copia 
 ## Notas
 
 - Los rangos de Excel pueden incluir varias representaciones en el portapapeles. La app prioriza texto tabular para conservar filas y columnas, y guarda imagen alternativa cuando esta disponible.
+- Los archivos copiados desde Finder se guardan como referencias a archivos locales y se restauran en el portapapeles como URLs de archivo.
 - El pegado automatico depende del permiso de Accesibilidad y del comportamiento de la aplicacion destino.

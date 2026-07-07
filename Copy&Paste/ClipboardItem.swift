@@ -12,6 +12,7 @@ import SwiftData
 enum ClipboardItemKind: String {
     case text
     case image
+    case file
 }
 
 enum ClipboardPasteMode: String, CaseIterable, Identifiable {
@@ -98,6 +99,22 @@ final class ClipboardItem {
         self.imageHeight = imageHeight
     }
 
+    init(
+        fileURLs: [URL],
+        copiedAt: Date = .now,
+        isPinned: Bool = false
+    ) {
+        self.id = UUID()
+        self.content = Self.fileContent(from: fileURLs)
+        self.copiedAt = copiedAt
+        self.isPinned = isPinned
+        self.alias = nil
+        self.kindRawValue = ClipboardItemKind.file.rawValue
+        self.imageData = nil
+        self.imageWidth = nil
+        self.imageHeight = nil
+    }
+
     var kind: ClipboardItemKind {
         if let kindRawValue,
            let kind = ClipboardItemKind(rawValue: kindRawValue) {
@@ -113,6 +130,10 @@ final class ClipboardItem {
 
     var isImage: Bool {
         kind == .image
+    }
+
+    var isFile: Bool {
+        kind == .file
     }
 
     var displayAlias: String? {
@@ -140,6 +161,30 @@ final class ClipboardItem {
         return ClipboardImagePayload(data: imageData, width: imageWidth, height: imageHeight)
     }
 
+    var fileURLs: [URL] {
+        guard isFile else {
+            return []
+        }
+
+        return Self.filePaths(from: content).map {
+            URL(fileURLWithPath: $0).standardizedFileURL
+        }
+    }
+
+    var existingFileURLs: [URL] {
+        fileURLs.filter {
+            FileManager.default.fileExists(atPath: $0.path)
+        }
+    }
+
+    var fileIcon: NSImage? {
+        guard let firstFileURL = fileURLs.first else {
+            return nil
+        }
+
+        return NSWorkspace.shared.icon(forFile: firstFileURL.path)
+    }
+
     var hasTabularText: Bool {
         kind == .text && ClipboardMonitor.isTabularText(content)
     }
@@ -160,11 +205,17 @@ final class ClipboardItem {
             return modes
         case .image:
             return [.automatic]
+        case .file:
+            return [.automatic]
         }
     }
 
     var preview: String {
-        guard !isImage else {
+        if isFile {
+            return filePreview
+        }
+
+        if isImage {
             if let imageWidth, let imageHeight {
                 return "Captura de pantalla \(Int(imageWidth)) x \(Int(imageHeight))"
             }
@@ -196,5 +247,41 @@ final class ClipboardItem {
         return preview.localizedCaseInsensitiveContains(normalizedQuery)
             || content.localizedCaseInsensitiveContains(normalizedQuery)
             || (displayAlias?.localizedCaseInsensitiveContains(normalizedQuery) ?? false)
+    }
+
+    private var filePreview: String {
+        let fileURLs = fileURLs
+
+        guard !fileURLs.isEmpty else {
+            return "Archivos no disponibles"
+        }
+
+        let names = fileURLs.map(\.lastPathComponent)
+
+        if names.count == 1 {
+            return names[0]
+        }
+
+        let firstNames = names.prefix(3).joined(separator: ", ")
+        let remainingCount = names.count - 3
+
+        if remainingCount > 0 {
+            return "\(names.count) archivos: \(firstNames) y \(remainingCount) mas"
+        }
+
+        return "\(names.count) archivos: \(firstNames)"
+    }
+
+    static func fileContent(from fileURLs: [URL]) -> String {
+        fileURLs
+            .map { $0.standardizedFileURL.path }
+            .joined(separator: "\n")
+    }
+
+    static func filePaths(from content: String) -> [String] {
+        content
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 }

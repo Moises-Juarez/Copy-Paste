@@ -154,6 +154,8 @@ final class ClipboardController: ObservableObject {
             storeClipboardText(text, alternateImage: alternateImage)
         case .image(let image):
             storeClipboardImage(image.data, width: image.width, height: image.height)
+        case .files(let files):
+            storeClipboardFiles(files.fileURLs)
         }
     }
 
@@ -178,6 +180,22 @@ final class ClipboardController: ObservableObject {
         save()
     }
 
+    private func storeClipboardFiles(_ fileURLs: [URL]) {
+        let fileContent = ClipboardItem.fileContent(from: fileURLs)
+        guard !fileContent.isEmpty else {
+            return
+        }
+
+        if let existingItem = items.first(where: { $0.kind == .file && $0.content == fileContent }) {
+            existingItem.copiedAt = .now
+            save()
+            return
+        }
+
+        modelContext.insert(ClipboardItem(fileURLs: fileURLs))
+        save()
+    }
+
     private func normalized(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -190,6 +208,8 @@ final class ClipboardController: ObservableObject {
             return true
         case .image:
             return copyImage(item)
+        case .file:
+            return copyFiles(item)
         }
     }
 
@@ -231,6 +251,30 @@ final class ClipboardController: ObservableObject {
         }
         NSPasteboard.general.setData(imagePayload.data, forType: ClipboardMonitor.pngPasteboardType)
         monitor.noteCurrentPasteboardContent(.image(imagePayload))
+        return true
+    }
+
+    private func copyFiles(_ item: ClipboardItem) -> Bool {
+        let fileURLs = item.fileURLs
+
+        guard !fileURLs.isEmpty else {
+            errorMessage = "No se pudo copiar el archivo porque ya no esta disponible."
+            return false
+        }
+
+        let existingFileURLs = item.existingFileURLs
+        guard existingFileURLs.count == fileURLs.count else {
+            errorMessage = "Uno o mas archivos ya no estan disponibles en su ubicacion original."
+            return false
+        }
+
+        let pasteboardURLs = existingFileURLs.map { $0 as NSURL }
+        guard NSPasteboard.general.writeObjects(pasteboardURLs) else {
+            errorMessage = "No se pudieron copiar los archivos al portapapeles."
+            return false
+        }
+
+        monitor.noteCurrentPasteboardContent(.files(ClipboardFilePayload(fileURLs: existingFileURLs)))
         return true
     }
 

@@ -15,9 +15,14 @@ struct ClipboardImagePayload: Equatable {
     let height: Double?
 }
 
+struct ClipboardFilePayload: Equatable {
+    let fileURLs: [URL]
+}
+
 enum ClipboardPayload: Equatable {
     case text(String, alternateImage: ClipboardImagePayload?)
     case image(ClipboardImagePayload)
+    case files(ClipboardFilePayload)
 }
 
 final class ClipboardMonitor: ObservableObject {
@@ -81,6 +86,10 @@ final class ClipboardMonitor: ObservableObject {
     }
 
     static func currentPayload(from pasteboard: NSPasteboard = .general) -> ClipboardPayload? {
+        if let filePayload = filePayload(from: pasteboard) {
+            return .files(filePayload)
+        }
+
         if let tablePayload = tabularTextPayload(from: pasteboard) {
             return tablePayload
         }
@@ -175,6 +184,32 @@ final class ClipboardMonitor: ObservableObject {
         }
     }
 
+    private static func filePayload(from pasteboard: NSPasteboard) -> ClipboardFilePayload? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true
+        ]
+        let urls = pasteboard
+            .readObjects(forClasses: [NSURL.self], options: options)?
+            .compactMap { object -> URL? in
+                if let url = object as? URL {
+                    return url
+                }
+
+                if let url = object as? NSURL {
+                    return url as URL
+                }
+
+                return nil
+            } ?? []
+        let fileURLs = normalizedFileURLs(urls)
+
+        guard !fileURLs.isEmpty else {
+            return nil
+        }
+
+        return ClipboardFilePayload(fileURLs: fileURLs)
+    }
+
     private static func imagePayload(from pasteboard: NSPasteboard) -> ClipboardImagePayload? {
         if let pngData = pasteboard.data(forType: pngPasteboardType), !pngData.isEmpty {
             return imagePayload(fromPNGData: pngData)
@@ -231,6 +266,26 @@ final class ClipboardMonitor: ObservableObject {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private static func normalizedFileURLs(_ urls: [URL]) -> [URL] {
+        var seenPaths = Set<String>()
+
+        return urls.compactMap { url in
+            guard url.isFileURL else {
+                return nil
+            }
+
+            let standardizedURL = url.standardizedFileURL
+            let path = standardizedURL.path
+
+            guard FileManager.default.fileExists(atPath: path),
+                  seenPaths.insert(path).inserted else {
+                return nil
+            }
+
+            return standardizedURL
+        }
+    }
+
     private func normalized(_ payload: ClipboardPayload) -> ClipboardPayload? {
         switch payload {
         case .text(let text, let alternateImage):
@@ -245,6 +300,9 @@ final class ClipboardMonitor: ObservableObject {
             return .text(normalizedText, alternateImage: normalizedAlternateImage)
         case .image(let image):
             return image.data.isEmpty ? nil : .image(image)
+        case .files(let files):
+            let fileURLs = Self.normalizedFileURLs(files.fileURLs)
+            return fileURLs.isEmpty ? nil : .files(ClipboardFilePayload(fileURLs: fileURLs))
         }
     }
 

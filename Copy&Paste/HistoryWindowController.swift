@@ -118,11 +118,11 @@ final class HistoryWindowController: ObservableObject {
             Self.activateTargetApplication(appToRestore)
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                if Self.sendPasteCommandWithAppleScript() {
+                if Self.sendPasteCommandWithAppleScript(to: appToRestore) {
                     return
                 }
 
-                Self.sendPasteCommandWithEvents()
+                _ = Self.sendPasteCommandWithEvents(to: appToRestore)
             }
         }
     }
@@ -139,6 +139,14 @@ final class HistoryWindowController: ObservableObject {
         AXUIElementSetAttributeValue(appElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
     }
 
+    private static func sendPasteCommandWithAppleScript(to application: NSRunningApplication?) -> Bool {
+        if let application, sendPasteCommandWithAppleScript(toProcessIdentifier: application.processIdentifier) {
+            return true
+        }
+
+        return sendPasteCommandWithAppleScript()
+    }
+
     private static func sendPasteCommandWithAppleScript() -> Bool {
         let scriptSource = """
         tell application "System Events"
@@ -151,7 +159,23 @@ final class HistoryWindowController: ObservableObject {
         return errorInfo == nil
     }
 
-    private static func sendPasteCommandWithEvents() {
+    private static func sendPasteCommandWithAppleScript(toProcessIdentifier processIdentifier: pid_t) -> Bool {
+        let scriptSource = """
+        tell application "System Events"
+            set targetProcess to first process whose unix id is \(processIdentifier)
+            set frontmost of targetProcess to true
+            tell targetProcess
+                keystroke "v" using command down
+            end tell
+        end tell
+        """
+
+        var errorInfo: NSDictionary?
+        NSAppleScript(source: scriptSource)?.executeAndReturnError(&errorInfo)
+        return errorInfo == nil
+    }
+
+    private static func sendPasteCommandWithEvents(to application: NSRunningApplication?) -> Bool {
         let source = CGEventSource(stateID: .combinedSessionState)
         source?.localEventsSuppressionInterval = 0
 
@@ -162,9 +186,20 @@ final class HistoryWindowController: ObservableObject {
         pasteDown?.flags = .maskCommand
         pasteUp?.flags = .maskCommand
 
+        guard let pasteDown, let pasteUp else {
+            return false
+        }
+
+        if let application {
+            pasteDown.postToPid(application.processIdentifier)
+            pasteUp.postToPid(application.processIdentifier)
+            return true
+        }
+
         [pasteDown, pasteUp].forEach { event in
             event?.post(tap: .cghidEventTap)
         }
+        return true
     }
 }
 

@@ -89,7 +89,7 @@ struct ContentView: View {
                         ContentUnavailableView(
                             "Sin copiados",
                             systemImage: "doc.on.clipboard",
-                            description: Text("Copia texto o una captura para verla aqui.")
+                            description: Text("Copia texto, una captura o archivos para verlos aqui.")
                         )
                     } else if filteredItems.isEmpty {
                         ContentUnavailableView.search(text: searchText)
@@ -319,6 +319,13 @@ private struct ClipboardRow: View {
                             .foregroundStyle(item.displayAlias == nil ? .primary : .secondary)
                             .lineLimit(item.displayAlias == nil ? 2 : 1)
 
+                        if item.isFile {
+                            Text(item.content)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
                         Text(item.copiedAt, format: Date.FormatStyle(date: .abbreviated, time: .shortened))
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -381,8 +388,13 @@ private struct ClipboardRow: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(.separator, lineWidth: 1)
                 }
+        } else if item.isFile, let fileIcon = item.fileIcon {
+            Image(nsImage: fileIcon)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 48, height: 34)
         } else {
-            Image(systemName: item.isPinned ? "pin.fill" : "doc.text")
+            Image(systemName: item.isPinned ? "pin.fill" : item.isFile ? "doc" : "doc.text")
                 .foregroundStyle(item.isPinned ? .blue : .secondary)
                 .frame(width: 48, height: 34)
         }
