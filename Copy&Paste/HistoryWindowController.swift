@@ -67,6 +67,14 @@ final class HistoryWindowController: ObservableObject {
         pasteIntoTargetApplication()
     }
 
+    func close() {
+        let appToRestore = targetApplication
+        targetApplication = nil
+        window?.orderOut(nil)
+        NSApp.hide(nil)
+        Self.activateTargetApplication(appToRestore)
+    }
+
     private func makeWindow() -> NSWindow {
         let rootView = ContentView()
             .environmentObject(clipboardController)
@@ -75,12 +83,17 @@ final class HistoryWindowController: ObservableObject {
             .modelContainer(modelContainer)
 
         let hostingController = NSHostingController(rootView: rootView)
-        let window = NSWindow(contentViewController: hostingController)
+        let window = HistoryWindow(contentViewController: hostingController)
         window.title = "Historial"
         window.setContentSize(NSSize(width: 540, height: 620))
         window.minSize = NSSize(width: 420, height: 420)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
+        window.onEscape = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.close()
+            }
+        }
         window.center()
         return window
     }
@@ -152,5 +165,32 @@ final class HistoryWindowController: ObservableObject {
         [pasteDown, pasteUp].forEach { event in
             event?.post(tap: .cghidEventTap)
         }
+    }
+}
+
+private final class HistoryWindow: NSWindow {
+    var onEscape: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) {
+        guard handleEscape() else {
+            super.cancelOperation(sender)
+            return
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard event.keyCode == UInt16(kVK_Escape), handleEscape() else {
+            super.keyDown(with: event)
+            return
+        }
+    }
+
+    private func handleEscape() -> Bool {
+        guard attachedSheet == nil else {
+            return false
+        }
+
+        onEscape?()
+        return true
     }
 }
