@@ -17,6 +17,11 @@ Copy&Paste permite abrir un historial rapido con `Command + Shift + V`, seleccio
   - Sin formato.
   - Como imagen, cuando el portapapeles original incluia una imagen alternativa.
 - Captura manual del portapapeles actual.
+- Navegacion con flechas, pegado con `Enter` y cierre con `Escape`.
+- Configuracion para limitar el historial por cantidad maxima, tiempo y espacio utilizado.
+- Identificacion visible del tipo y tamaño de cada registro.
+- Deteccion y limpieza confirmada de referencias a archivos que ya no existen.
+- Orden manual y persistente de los registros fijados mediante arrastrar y soltar.
 - Inicio automatico con macOS.
 - Indicador de permiso de accesibilidad.
 
@@ -44,6 +49,10 @@ El historial y los registros fijados se conservan despues de reiniciar la comput
 
 Cuando se copian archivos, la app guarda referencias a sus rutas originales. Esto permite volver a ponerlos en el portapapeles para adjuntarlos o pegarlos en otras aplicaciones sin duplicar archivos pesados dentro de la base de datos. Si un archivo se mueve o se elimina, ese registro ya no podra pegarse hasta que el archivo vuelva a existir en esa ubicacion.
 
+La limpieza automatica del historial aplica solo a registros no fijados. Por defecto se conservan hasta 500 registros no fijados, sin limite de tiempo y con un maximo aproximado de 500 MB. Desde la configuracion puedes cambiar la cantidad, conservar registros solo por 7, 30, 90, 180 o 365 dias y elegir un limite entre 100 MB y 2 GB. Los registros fijados siempre se conservan y pueden hacer que el uso total rebase el limite configurado.
+
+El esquema de SwiftData esta versionado y cuenta con una migracion ligera desde la estructura anterior para conservar el historial existente.
+
 ## Desarrollo
 
 Requisitos:
@@ -65,6 +74,14 @@ xcodebuild -project "Copy&Paste.xcodeproj" \
   -scheme "Copy&Paste" \
   -destination "platform=macOS" \
   -configuration Debug build
+```
+
+Ejecutar las pruebas:
+
+```bash
+xcodebuild test -project "Copy&Paste.xcodeproj" \
+  -scheme "Copy&Paste" \
+  -destination "platform=macOS"
 ```
 
 ## Exportar la app
@@ -117,6 +134,8 @@ Command + Shift + V
 ```
 
 Este atajo muestra la ventana de historial. Al seleccionar un elemento se copia al portapapeles, se regresa a la aplicacion previa y se intenta pegar automaticamente.
+
+Al abrir el historial puedes escribir para buscar, usar las flechas para cambiar la seleccion, presionar `Enter` para pegar o `Escape` para cancelar.
 
 ## Notas
 

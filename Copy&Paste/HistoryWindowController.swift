@@ -12,9 +12,17 @@ import Combine
 import SwiftData
 import SwiftUI
 
+enum HistoryKeyboardCommand {
+    case previous
+    case next
+    case pasteSelected
+}
+
 @MainActor
 final class HistoryWindowController: ObservableObject {
     @Published var errorMessage: String?
+    @Published private(set) var presentationID = UUID()
+    let keyboardCommands = PassthroughSubject<HistoryKeyboardCommand, Never>()
 
     private let clipboardController: ClipboardController
     private let accessibilityPermissionController: AccessibilityPermissionController
@@ -34,15 +42,24 @@ final class HistoryWindowController: ObservableObject {
 
     func show() {
         captureTargetApplication()
-        clipboardController.refresh()
         accessibilityPermissionController.refresh()
+        clipboardController.refreshFileMetadata()
 
         if window == nil {
             window = makeWindow()
         }
 
+        presentationID = UUID()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func prepareWindow() {
+        guard window == nil else {
+            return
+        }
+
+        window = makeWindow()
     }
 
     func pasteAndClose(_ item: ClipboardItem) {
@@ -78,6 +95,7 @@ final class HistoryWindowController: ObservableObject {
     private func makeWindow() -> NSWindow {
         let rootView = ContentView()
             .environmentObject(clipboardController)
+            .environmentObject(clipboardController.retentionSettings)
             .environmentObject(accessibilityPermissionController)
             .environmentObject(self)
             .modelContainer(modelContainer)
@@ -90,9 +108,10 @@ final class HistoryWindowController: ObservableObject {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
         window.onEscape = { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.close()
-            }
+            self?.close()
+        }
+        window.onKeyboardCommand = { [weak self] command in
+            self?.keyboardCommands.send(command)
         }
         window.center()
         return window
@@ -205,6 +224,16 @@ final class HistoryWindowController: ObservableObject {
 
 private final class HistoryWindow: NSWindow {
     var onEscape: (() -> Void)?
+    var onKeyboardCommand: ((HistoryKeyboardCommand) -> Void)?
+
+    override func sendEvent(_ event: NSEvent) {
+        if let command = keyboardCommand(for: event) {
+            onKeyboardCommand?(command)
+            return
+        }
+
+        super.sendEvent(event)
+    }
 
     override func cancelOperation(_ sender: Any?) {
         guard handleEscape() else {
@@ -227,5 +256,25 @@ private final class HistoryWindow: NSWindow {
 
         onEscape?()
         return true
+    }
+
+    private func keyboardCommand(for event: NSEvent) -> HistoryKeyboardCommand? {
+        guard event.type == .keyDown,
+              attachedSheet == nil,
+              childWindows?.isEmpty != false,
+              event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
+            return nil
+        }
+
+        switch event.keyCode {
+        case UInt16(kVK_UpArrow):
+            return .previous
+        case UInt16(kVK_DownArrow):
+            return .next
+        case UInt16(kVK_Return), UInt16(kVK_ANSI_KeypadEnter):
+            return .pasteSelected
+        default:
+            return nil
+        }
     }
 }

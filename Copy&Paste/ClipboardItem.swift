@@ -54,10 +54,28 @@ enum ClipboardPasteMode: String, CaseIterable, Identifiable {
 
 @Model
 final class ClipboardItem {
+    private static let imageCache: NSCache<NSUUID, NSImage> = {
+        let cache = NSCache<NSUUID, NSImage>()
+        cache.totalCostLimit = 128 * 1_024 * 1_024
+        return cache
+    }()
+    private static let previewCache: NSCache<NSUUID, NSString> = {
+        let cache = NSCache<NSUUID, NSString>()
+        cache.countLimit = 2_000
+        return cache
+    }()
+    private static let tabularTextCache: NSCache<NSUUID, NSNumber> = {
+        let cache = NSCache<NSUUID, NSNumber>()
+        cache.countLimit = 2_000
+        return cache
+    }()
+
     @Attribute(.unique) var id: UUID
     var content: String
     var copiedAt: Date
     var isPinned: Bool
+    var pinnedPosition: Int?
+    var storedByteCount: Int64?
     var alias: String?
     var kindRawValue: String?
     @Attribute(.externalStorage) var imageData: Data?
@@ -74,6 +92,8 @@ final class ClipboardItem {
         self.content = content
         self.copiedAt = copiedAt
         self.isPinned = isPinned
+        self.pinnedPosition = nil
+        self.storedByteCount = Int64(content.lengthOfBytes(using: .utf8) + (alternateImage?.data.count ?? 0))
         self.alias = nil
         self.kindRawValue = ClipboardItemKind.text.rawValue
         self.imageData = alternateImage?.data
@@ -92,6 +112,8 @@ final class ClipboardItem {
         self.content = ""
         self.copiedAt = copiedAt
         self.isPinned = isPinned
+        self.pinnedPosition = nil
+        self.storedByteCount = Int64(imageData.count)
         self.alias = nil
         self.kindRawValue = ClipboardItemKind.image.rawValue
         self.imageData = imageData
@@ -108,6 +130,8 @@ final class ClipboardItem {
         self.content = Self.fileContent(from: fileURLs)
         self.copiedAt = copiedAt
         self.isPinned = isPinned
+        self.pinnedPosition = nil
+        self.storedByteCount = Int64(content.lengthOfBytes(using: .utf8))
         self.alias = nil
         self.kindRawValue = ClipboardItemKind.file.rawValue
         self.imageData = nil
@@ -146,11 +170,22 @@ final class ClipboardItem {
     }
 
     var image: NSImage? {
+        let cacheKey = id as NSUUID
+
+        if let cachedImage = Self.imageCache.object(forKey: cacheKey) {
+            return cachedImage
+        }
+
         guard let imageData else {
             return nil
         }
 
-        return NSImage(data: imageData)
+        guard let image = NSImage(data: imageData) else {
+            return nil
+        }
+
+        Self.imageCache.setObject(image, forKey: cacheKey, cost: imageData.count)
+        return image
     }
 
     var alternateImagePayload: ClipboardImagePayload? {
@@ -177,16 +212,106 @@ final class ClipboardItem {
         }
     }
 
-    var fileIcon: NSImage? {
-        guard let firstFileURL = fileURLs.first else {
-            return nil
+    var unavailableFileCount: Int {
+        guard isFile else {
+            return 0
         }
 
-        return NSWorkspace.shared.icon(forFile: firstFileURL.path)
+        return max(fileURLs.count - existingFileURLs.count, 0)
+    }
+
+    var hasUnavailableFiles: Bool {
+        unavailableFileCount > 0
+    }
+
+    var estimatedStorageBytes: Int64 {
+        storedByteCount ?? calculatedStorageBytes
+    }
+
+    var knownStorageBytes: Int64 {
+        storedByteCount ?? Int64(
+            content.lengthOfBytes(using: .utf8)
+                + (alias?.lengthOfBytes(using: .utf8) ?? 0)
+        )
+    }
+
+    func refreshStoredByteCount() {
+        storedByteCount = calculatedStorageBytes
+    }
+
+    private var calculatedStorageBytes: Int64 {
+        let contentBytes = Int64(content.lengthOfBytes(using: .utf8))
+        let aliasBytes = Int64(alias?.lengthOfBytes(using: .utf8) ?? 0)
+        let imageBytes = Int64(imageData?.count ?? 0)
+        return contentBytes + aliasBytes + imageBytes
+    }
+
+    var representedContentBytes: Int64 {
+        guard isFile else {
+            return estimatedStorageBytes
+        }
+
+        return existingFileURLs.reduce(into: Int64(0)) { total, fileURL in
+            let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+            total += (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        }
+    }
+
+    var contentTypeTitle: String {
+        switch kind {
+        case .text:
+            return hasTabularText ? "Tabla" : "Texto"
+        case .image:
+            return "Imagen"
+        case .file:
+            let count = fileURLs.count
+            return count == 1 ? "Archivo" : "\(count) archivos"
+        }
+    }
+
+    var contentTypeSystemImage: String {
+        switch kind {
+        case .text:
+            return hasTabularText ? "tablecells" : "doc.text"
+        case .image:
+            return "photo"
+        case .file:
+            return "doc"
+        }
+    }
+
+    var representedSizeDescription: String {
+        if isFile && existingFileURLs.isEmpty {
+            return "No disponible"
+        }
+
+        return ByteCountFormatter.string(
+            fromByteCount: representedContentBytes,
+            countStyle: .file
+        )
+    }
+
+    func invalidateVisualCache() {
+        let cacheKey = id as NSUUID
+        Self.imageCache.removeObject(forKey: cacheKey)
+        Self.previewCache.removeObject(forKey: cacheKey)
+        Self.tabularTextCache.removeObject(forKey: cacheKey)
     }
 
     var hasTabularText: Bool {
-        kind == .text && ClipboardMonitor.isTabularText(content)
+        guard kind == .text else {
+            return false
+        }
+
+        let cacheKey = id as NSUUID
+
+        if let cachedResult = Self.tabularTextCache.object(forKey: cacheKey) {
+            return cachedResult.boolValue
+        }
+
+        let isTabular = ClipboardMonitor.isTabularText(content)
+        Self.tabularTextCache.setObject(NSNumber(value: isTabular), forKey: cacheKey)
+        return isTabular
     }
 
     var availablePasteModes: [ClipboardPasteMode] {
@@ -211,21 +336,30 @@ final class ClipboardItem {
     }
 
     var preview: String {
+        let cacheKey = id as NSUUID
+
+        if let cachedPreview = Self.previewCache.object(forKey: cacheKey) {
+            return cachedPreview as String
+        }
+
+        let generatedPreview: String
+
         if isFile {
-            return filePreview
-        }
-
-        if isImage {
+            generatedPreview = filePreview
+        } else if isImage {
             if let imageWidth, let imageHeight {
-                return "Captura de pantalla \(Int(imageWidth)) x \(Int(imageHeight))"
+                generatedPreview = "Captura de pantalla \(Int(imageWidth)) x \(Int(imageHeight))"
+            } else {
+                generatedPreview = imageData == nil ? "Imagen no disponible" : "Captura de pantalla"
             }
-
-            return imageData == nil ? "Imagen no disponible" : "Captura de pantalla"
+        } else {
+            generatedPreview = content
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        return content
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        Self.previewCache.setObject(generatedPreview as NSString, forKey: cacheKey)
+        return generatedPreview
     }
 
     var menuTitle: String {

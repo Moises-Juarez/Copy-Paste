@@ -13,6 +13,7 @@ import SwiftData
 struct Copy_PasteApp: App {
     private let globalHotKeyController: GlobalHotKeyController
 
+    @StateObject private var historyRetentionSettings: HistoryRetentionSettings
     @StateObject private var clipboardController: ClipboardController
     @StateObject private var accessibilityPermissionController: AccessibilityPermissionController
     @StateObject private var historyWindowController: HistoryWindowController
@@ -20,7 +21,11 @@ struct Copy_PasteApp: App {
 
     init() {
         let modelContainer = Self.makeModelContainer()
-        let clipboardController = ClipboardController(modelContainer: modelContainer)
+        let historyRetentionSettings = HistoryRetentionSettings()
+        let clipboardController = ClipboardController(
+            modelContainer: modelContainer,
+            retentionSettings: historyRetentionSettings
+        )
         let accessibilityPermissionController = AccessibilityPermissionController()
         let historyWindowController = HistoryWindowController(
             clipboardController: clipboardController,
@@ -33,8 +38,12 @@ struct Copy_PasteApp: App {
                 historyWindowController.show()
             }
         }
+        Task { @MainActor in
+            historyWindowController.prepareWindow()
+        }
 
         self.globalHotKeyController = globalHotKeyController
+        self._historyRetentionSettings = StateObject(wrappedValue: historyRetentionSettings)
         self._clipboardController = StateObject(wrappedValue: clipboardController)
         self._accessibilityPermissionController = StateObject(wrappedValue: accessibilityPermissionController)
         self._historyWindowController = StateObject(wrappedValue: historyWindowController)
@@ -48,6 +57,7 @@ struct Copy_PasteApp: App {
                 .environmentObject(globalHotKeyController)
                 .environmentObject(historyWindowController)
                 .environmentObject(launchAtLoginController)
+                .environmentObject(historyRetentionSettings)
         } label: {
             Label("Copy&Paste", systemImage: "doc.on.clipboard")
         }
@@ -55,11 +65,24 @@ struct Copy_PasteApp: App {
     }
 
     private static func makeModelContainer() -> ModelContainer {
-        let schema = Schema([
-            ClipboardItem.self,
-        ])
+        let schema = Schema(versionedSchema: ClipboardHistorySchemaV3.self)
 
         do {
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                let testConfiguration = ModelConfiguration(
+                    "ClipboardHistoryTests",
+                    schema: schema,
+                    isStoredInMemoryOnly: true,
+                    cloudKitDatabase: .none
+                )
+
+                return try ModelContainer(
+                    for: schema,
+                    migrationPlan: ClipboardHistoryMigrationPlan.self,
+                    configurations: [testConfiguration]
+                )
+            }
+
             let storeURL = try clipboardHistoryStoreURL()
             try migrateDefaultStoreIfNeeded(to: storeURL)
 
@@ -70,7 +93,11 @@ struct Copy_PasteApp: App {
                 cloudKitDatabase: .none
             )
 
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(
+                for: schema,
+                migrationPlan: ClipboardHistoryMigrationPlan.self,
+                configurations: [modelConfiguration]
+            )
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }
