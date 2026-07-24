@@ -340,7 +340,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.002;
+				MARKETING_VERSION = 1.003;
 				PRODUCT_BUNDLE_IDENTIFIER = "Moises-Juarez.Copy-Paste";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -375,7 +375,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.002;
+				MARKETING_VERSION = 1.003;
 				PRODUCT_BUNDLE_IDENTIFIER = "Moises-Juarez.Copy-Paste";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CoreData
 import SwiftUI
 import SwiftData
 
@@ -67,8 +68,8 @@ struct Copy_PasteApp: App {
     private static func makeModelContainer() -> ModelContainer {
         let schema = Schema(versionedSchema: ClipboardHistorySchemaV3.self)
 
-        do {
-            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            do {
                 let testConfiguration = ModelConfiguration(
                     "ClipboardHistoryTests",
                     schema: schema,
@@ -81,26 +82,72 @@ struct Copy_PasteApp: App {
                     migrationPlan: ClipboardHistoryMigrationPlan.self,
                     configurations: [testConfiguration]
                 )
+            } catch {
+                fatalError("Could not create the test ModelContainer: \(error)")
             }
-
-            let storeURL = try clipboardHistoryStoreURL()
-            try migrateDefaultStoreIfNeeded(to: storeURL)
-
-            let modelConfiguration = ModelConfiguration(
-                "ClipboardHistory",
-                schema: schema,
-                url: storeURL,
-                cloudKitDatabase: .none
-            )
-
-            return try ModelContainer(
-                for: schema,
-                migrationPlan: ClipboardHistoryMigrationPlan.self,
-                configurations: [modelConfiguration]
-            )
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
         }
+
+        do {
+            let storeURL = try clipboardHistoryStoreURL()
+            try quarantineIncompatibleStoreIfNeeded(at: storeURL)
+            try migrateDefaultStoreIfNeeded(to: storeURL)
+            return try makePersistentModelContainer(schema: schema, storeURL: storeURL)
+        } catch {
+            NSLog("Copy&Paste could not open its history store: \(error)")
+
+            do {
+                let storeURL = try clipboardHistoryStoreURL()
+                let recoveryURL = try quarantineStoreFiles(at: storeURL)
+
+                if let recoveryURL {
+                    NSLog("Copy&Paste preserved the incompatible store at \(recoveryURL.path)")
+                }
+
+                try migrateDefaultStoreIfNeeded(to: storeURL)
+                return try makePersistentModelContainer(schema: schema, storeURL: storeURL)
+            } catch {
+                NSLog("Copy&Paste is using temporary in-memory history: \(error)")
+
+                do {
+                    return try makeInMemoryModelContainer(schema: schema)
+                } catch {
+                    fatalError("Could not create a fallback ModelContainer: \(error)")
+                }
+            }
+        }
+    }
+
+    private static func makePersistentModelContainer(
+        schema: Schema,
+        storeURL: URL
+    ) throws -> ModelContainer {
+        let modelConfiguration = ModelConfiguration(
+            "ClipboardHistory",
+            schema: schema,
+            url: storeURL,
+            cloudKitDatabase: .none
+        )
+
+        return try ModelContainer(
+            for: schema,
+            migrationPlan: ClipboardHistoryMigrationPlan.self,
+            configurations: [modelConfiguration]
+        )
+    }
+
+    private static func makeInMemoryModelContainer(schema: Schema) throws -> ModelContainer {
+        let modelConfiguration = ModelConfiguration(
+            "ClipboardHistoryFallback",
+            schema: schema,
+            isStoredInMemoryOnly: true,
+            cloudKitDatabase: .none
+        )
+
+        return try ModelContainer(
+            for: schema,
+            migrationPlan: ClipboardHistoryMigrationPlan.self,
+            configurations: [modelConfiguration]
+        )
     }
 
     private static func clipboardHistoryStoreURL() throws -> URL {
@@ -137,10 +184,34 @@ struct Copy_PasteApp: App {
 
     private static func mostRecentExistingDefaultStoreURL() -> URL? {
         defaultStoreCandidates()
-            .filter { FileManager.default.fileExists(atPath: $0.path) }
+            .filter {
+                FileManager.default.fileExists(atPath: $0.path)
+                    && isClipboardHistoryStore(at: $0)
+            }
             .max { lhs, rhs in
                 modificationDate(for: lhs) < modificationDate(for: rhs)
             }
+    }
+
+    static func isClipboardHistoryStore(at storeURL: URL) -> Bool {
+        guard let metadata = try? NSPersistentStoreCoordinator.metadataForPersistentStore(
+            type: .sqlite,
+            at: storeURL
+        ),
+        let versionHashes = metadata[NSStoreModelVersionHashesKey] as? [String: Data] else {
+            return false
+        }
+
+        return versionHashes.keys.contains("ClipboardItem")
+    }
+
+    private static func quarantineIncompatibleStoreIfNeeded(at storeURL: URL) throws {
+        guard FileManager.default.fileExists(atPath: storeURL.path),
+              !isClipboardHistoryStore(at: storeURL) else {
+            return
+        }
+
+        _ = try quarantineStoreFiles(at: storeURL)
     }
 
     private static func defaultStoreCandidates() -> [URL] {
@@ -187,6 +258,40 @@ struct Copy_PasteApp: App {
         }
 
         try FileManager.default.copyItem(at: sourceSupportURL, to: targetSupportURL)
+    }
+
+    @discardableResult
+    static func quarantineStoreFiles(at storeURL: URL) throws -> URL? {
+        let fileManager = FileManager.default
+        let storeFiles = [
+            storeURL,
+            URL(fileURLWithPath: storeURL.path + "-wal"),
+            URL(fileURLWithPath: storeURL.path + "-shm"),
+            externalDataDirectory(for: storeURL),
+        ]
+        .filter { fileManager.fileExists(atPath: $0.path) }
+
+        guard !storeFiles.isEmpty else {
+            return nil
+        }
+
+        let recoveryRootURL = storeURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("Recovery", isDirectory: true)
+        let recoveryURL = recoveryRootURL
+            .appendingPathComponent("ClipboardHistory-\(UUID().uuidString)", isDirectory: true)
+
+        try fileManager.createDirectory(
+            at: recoveryURL,
+            withIntermediateDirectories: true
+        )
+
+        for sourceURL in storeFiles {
+            let destinationURL = recoveryURL.appendingPathComponent(sourceURL.lastPathComponent)
+            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+        }
+
+        return recoveryURL
     }
 
     private static func externalDataDirectory(for storeURL: URL) -> URL {

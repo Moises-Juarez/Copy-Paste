@@ -30,7 +30,6 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var aliasEditorItem: ClipboardItem?
     @State private var aliasText = ""
-    @State private var isShowingAliasEditor = false
     @State private var isShowingClearHistoryConfirmation = false
     @State private var isShowingUnavailableFilesConfirmation = false
     @State private var isPinnedSectionExpanded = false
@@ -186,15 +185,13 @@ struct ContentView: View {
         .onReceive(historyWindowController.keyboardCommands) { command in
             handleKeyboardCommand(command)
         }
-        .sheet(isPresented: $isShowingAliasEditor) {
-            if let aliasEditorItem {
-                AliasEditorView(
-                    item: aliasEditorItem,
-                    aliasText: $aliasText,
-                    onCancel: closeAliasEditor,
-                    onSave: saveAlias
-                )
-            }
+        .sheet(item: $aliasEditorItem) { item in
+            AliasEditorView(
+                item: item,
+                aliasText: $aliasText,
+                onCancel: closeAliasEditor,
+                onSave: saveAlias
+            )
         }
         .safeAreaInset(edge: .bottom) {
             if let message = footerMessage {
@@ -480,13 +477,11 @@ struct ContentView: View {
     }
 
     private func openAliasEditor(for item: ClipboardItem) {
-        aliasEditorItem = item
         aliasText = item.displayAlias ?? ""
-        isShowingAliasEditor = true
+        aliasEditorItem = item
     }
 
     private func closeAliasEditor() {
-        isShowingAliasEditor = false
         aliasEditorItem = nil
         aliasText = ""
     }
@@ -866,6 +861,7 @@ private struct AliasEditorView: View {
     @Binding var aliasText: String
     let onCancel: () -> Void
     let onSave: () -> Void
+    @FocusState private var isAliasFieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -879,6 +875,7 @@ private struct AliasEditorView: View {
 
             TextField("Alias", text: $aliasText)
                 .textFieldStyle(.roundedBorder)
+                .focused($isAliasFieldFocused)
                 .onSubmit(onSave)
 
             HStack {
@@ -899,6 +896,11 @@ private struct AliasEditorView: View {
         }
         .padding()
         .frame(width: 360, alignment: .leading)
+        .onAppear {
+            DispatchQueue.main.async {
+                isAliasFieldFocused = true
+            }
+        }
     }
 }
 

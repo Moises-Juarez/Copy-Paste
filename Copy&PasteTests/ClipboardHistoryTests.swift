@@ -10,6 +10,15 @@ import SwiftData
 import XCTest
 @testable import Copy_Paste
 
+@Model
+private final class UnrelatedStoreItem {
+    var value: String
+
+    init(value: String) {
+        self.value = value
+    }
+}
+
 @MainActor
 final class ClipboardHistoryTests: XCTestCase {
     private var userDefaults: UserDefaults!
@@ -284,6 +293,104 @@ final class ClipboardHistoryTests: XCTestCase {
 
         XCTAssertEqual(migratedItem.content, "Registro actual")
         XCTAssertEqual(migratedItem.pinnedPosition, 3)
+    }
+
+    func testStoreValidationAcceptsOnlyClipboardHistoryModels() throws {
+        let temporaryDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+        let historyStoreURL = temporaryDirectory.appendingPathComponent("History.store")
+        let historySchema = Schema(versionedSchema: ClipboardHistorySchemaV1.self)
+        let historyConfiguration = ModelConfiguration(
+            "History",
+            schema: historySchema,
+            url: historyStoreURL,
+            cloudKitDatabase: .none
+        )
+
+        do {
+            let container = try ModelContainer(
+                for: historySchema,
+                configurations: [historyConfiguration]
+            )
+            let context = ModelContext(container)
+            context.insert(ClipboardHistorySchemaV1.ClipboardItem(content: "Historial"))
+            try context.save()
+        }
+
+        let unrelatedStoreURL = temporaryDirectory.appendingPathComponent("Unrelated.store")
+        let unrelatedSchema = Schema([UnrelatedStoreItem.self])
+        let unrelatedConfiguration = ModelConfiguration(
+            "Unrelated",
+            schema: unrelatedSchema,
+            url: unrelatedStoreURL,
+            cloudKitDatabase: .none
+        )
+
+        do {
+            let container = try ModelContainer(
+                for: unrelatedSchema,
+                configurations: [unrelatedConfiguration]
+            )
+            let context = ModelContext(container)
+            context.insert(UnrelatedStoreItem(value: "Otro proyecto"))
+            try context.save()
+        }
+
+        XCTAssertTrue(Copy_PasteApp.isClipboardHistoryStore(at: historyStoreURL))
+        XCTAssertFalse(Copy_PasteApp.isClipboardHistoryStore(at: unrelatedStoreURL))
+    }
+
+    func testQuarantinePreservesAllStoreFiles() throws {
+        let temporaryDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+        let storeURL = temporaryDirectory.appendingPathComponent("ClipboardHistory.store")
+        let walURL = URL(fileURLWithPath: storeURL.path + "-wal")
+        let shmURL = URL(fileURLWithPath: storeURL.path + "-shm")
+        let supportURL = temporaryDirectory.appendingPathComponent(
+            ".ClipboardHistory_SUPPORT",
+            isDirectory: true
+        )
+
+        try Data("store".utf8).write(to: storeURL)
+        try Data("wal".utf8).write(to: walURL)
+        try Data("shm".utf8).write(to: shmURL)
+        try FileManager.default.createDirectory(
+            at: supportURL,
+            withIntermediateDirectories: true
+        )
+        try Data("image".utf8).write(to: supportURL.appendingPathComponent("external.data"))
+
+        let recoveryURL = try XCTUnwrap(
+            Copy_PasteApp.quarantineStoreFiles(at: storeURL)
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: storeURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: walURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: shmURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: supportURL.path))
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: recoveryURL.appendingPathComponent(storeURL.lastPathComponent).path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: recoveryURL.appendingPathComponent(walURL.lastPathComponent).path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: recoveryURL.appendingPathComponent(shmURL.lastPathComponent).path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: recoveryURL.appendingPathComponent(supportURL.lastPathComponent).path
+            )
+        )
     }
 
     private func makeInMemoryContainer() throws -> ModelContainer {
